@@ -40,6 +40,41 @@ stale-docs/
 
 There is also `/stale-docs`, which audits the entire repo and reports the ten most confident findings, ranked.
 
+## See it work
+
+This repo dogfoods itself. While I was cleaning up the scanner, the installed plugin caught the edit and injected this into the session:
+
+```
+stale-docs: documentation references `hooks/check-stale.js`, which was just modified.
+
+- README.md:28 references `check-stale.js` (fenced code block)
+- README.md:37 references `check-stale.js` (prose)
+
+Before finishing this task, verify each reference against the edit you just made.
+```
+
+That edit was internal cleanup, both references were still accurate, so nothing got patched. Flag, verify, stay quiet.
+
+You can also run the scanner by hand, no Claude required. It reads the same JSON the hook receives:
+
+```sh
+mkdir demo && cd demo
+printf 'export function greetUser(name) {\n  return `hi ${name}`;\n}\n' > lib.js
+printf '# demo\n\nCall greetUser("world") to say hi.\n' > README.md
+printf '{"tool_input":{"file_path":"lib.js"},"cwd":"%s"}' "$PWD" \
+  | node /path/to/stale-docs/hooks/check-stale.js
+```
+
+Output (the doc mentions `greetUser`, so the hook speaks up):
+
+```json
+{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":
+"stale-docs: documentation references `lib.js`, which was just modified.\n\n
+- README.md:3 mentions `greetUser` (prose)\n\n..."}}
+```
+
+Point it at a file nothing documents and it prints nothing at all. That silence is the feature: the hook only costs attention when a doc is actually at risk.
+
 ## Configuration
 
 Optional. Drop a `.stale-docs.json` in your repo root to override the defaults:
