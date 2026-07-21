@@ -1,0 +1,18 @@
+{
+  "sourceGlobs": [
+    "**/*.{js,jsx,ts,tsx,mjs,cjs,py,go,rs,java,rb,c,h,cpp,hpp}"
+  ],
+  "docGlobs": [
+    "README.md",
+    "*.md",
+    "docs/**/*.md"
+  ],
+  "ignore": [
+    "**/node_modules/**",
+    "**/.git/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/vendor/**",
+    "**/target/**"
+  ]
+}

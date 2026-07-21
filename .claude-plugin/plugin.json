@@ -1,0 +1,13 @@
+{
+  "name": "stale-docs",
+  "version": "0.1.0",
+  "description": "Detects documentation made stale by code changes and patches it in the same commit. Your docs can never lie again.",
+  "author": {
+    "name": "SectionTN",
+    "url": "https://github.com/SectionTN"
+  },
+  "homepage": "https://github.com/SectionTN/stale-docs",
+  "repository": "https://github.com/SectionTN/stale-docs",
+  "license": "MIT",
+  "keywords": ["documentation", "docs", "hooks", "drift", "readme"]
+}

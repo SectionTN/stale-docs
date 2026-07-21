@@ -1,0 +1,14 @@
+{
+  "name": "stale-docs",
+  "owner": {
+    "name": "SectionTN",
+    "url": "https://github.com/SectionTN"
+  },
+  "plugins": [
+    {
+      "name": "stale-docs",
+      "source": "./",
+      "description": "Detects documentation made stale by code changes and patches it in the same commit."
+    }
+  ]
+}
