@@ -252,8 +252,8 @@ function checkFile(root, sourceRel, docs) {
 
 function describe(f) {
   const where = f.inCode ? 'fenced code block' : 'prose';
-  const what = f.kind === 'path' ? 'references path' : 'mentions symbol';
-  return `${f.doc}:${f.line} — ${what} \`${f.matched}\` (${where})`;
+  const what = f.kind === 'path' ? 'references' : 'mentions';
+  return `${f.doc}:${f.line} ${what} \`${f.matched}\` (${where})`;
 }
 
 function runHook() {
@@ -339,7 +339,7 @@ function runAudit() {
     return;
   }
   const out = ranked
-    .map((f, i) => `${i + 1}. ${describe(f)} — from ${f.source}`)
+    .map((f, i) => `${i + 1}. ${describe(f)}, from ${f.source}`)
     .join('\n');
   process.stdout.write(out + '\n');
 }

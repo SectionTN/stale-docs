@@ -2,13 +2,13 @@
 
 Your docs can never lie again.
 
-When a code change makes documentation outdated, stale-docs detects it and gets the docs patched **in the same commit**. No CI job, no follow-up PR, no "docs cleanup" ticket that dies in the backlog.
+You change code and the README quietly stops being true. Nobody notices until a stranger does. stale-docs catches the drift the moment it happens and gets the docs patched in the same commit as the code, so there is nothing to clean up later.
 
 ## Before / after
 
-**Without stale-docs:** you rename `--output` to `--out-dir`. The README still shows `--output`. Three weeks later a user copies the example, it fails, and they file an issue. You fix the README in a commit titled "docs: oops". Everyone involved has had a worse day than necessary.
+Without stale-docs: you rename `--output` to `--out-dir`. The README still shows `--output`. Three weeks later a user copies the example, it fails, and they file an issue. You fix the README in a commit titled "docs: oops" and apologize in the thread.
 
-**With stale-docs:** you rename the flag. A hook notices the README references it, tells the agent exactly which lines are affected, and the README is patched before the task ends. Code and docs land in one commit. Nobody files anything.
+With stale-docs: you rename the flag, a hook notices the README references it, and the line is fixed before the task ends. Code and docs land in one commit. Nobody files anything.
 
 ## Install (30 seconds)
 
@@ -17,7 +17,7 @@ When a code change makes documentation outdated, stale-docs detects it and gets 
 /plugin install stale-docs@stale-docs
 ```
 
-That's it. No config required. See [INSTALL.md](INSTALL.md) for the manual route and configuration.
+That's it. It works with zero config. [INSTALL.md](INSTALL.md) covers the manual route and the config file.
 
 ## How it works
 
@@ -25,20 +25,20 @@ That's it. No config required. See [INSTALL.md](INSTALL.md) for the manual route
 stale-docs/
 ├── hooks/
 │   ├── hooks.json          fires after every Edit/Write on source files
-│   └── check-stale.js      the scanner — deterministic, zero deps, ~35ms
+│   └── check-stale.js      the scanner: deterministic, zero dependencies, ~35ms
 ├── skills/stale-docs/
-│   └── SKILL.md            patching rules: minimal diffs, exact signatures
+│   └── SKILL.md            patching rules the agent follows
 ├── commands/
-│   └── stale-docs.md       /stale-docs — audit the whole repo on demand
+│   └── stale-docs.md       /stale-docs audits the whole repo on demand
 └── .stale-docs.json        optional config (globs, ignore list)
 ```
 
-1. A PostToolUse hook fires after every `Edit`/`Write` on a source file (js, ts, py, go, rs, and friends — configurable).
-2. `check-stale.js` extracts the file's exported symbols (functions, classes, CLI flags) and scans README.md, root markdown, and `docs/**` for references — by file path, by symbol name, inside fenced code blocks and API tables.
-3. If anything references the changed code, the hook injects context listing each affected `file:line`, ranked by confidence. The agent verifies each reference against the edit it just made and patches the ones that went stale — minimally, staged with the code.
-4. If nothing references the changed code, the hook says nothing. Zero noise.
+1. A PostToolUse hook fires whenever a source file gets edited. The extension list is configurable; the default covers js, ts, py, go, rs, and the other usual suspects.
+2. `check-stale.js` pulls the exported names out of the changed file (functions, classes, CLI flags) and looks for them in your markdown, along with the file's path. A hit inside a fenced code block counts for more than a mention in prose.
+3. If anything references the changed code, the hook hands the agent a list of `file:line` locations and tells it to check each one against the edit it just made. Lines that went stale get patched and staged with the code.
+4. If nothing references the changed code, the hook prints nothing. You will forget it's installed until the day it saves you.
 
-There's also `/stale-docs`, which audits the entire repo and reports the 10 most confident stale references, ranked.
+There is also `/stale-docs`, which audits the entire repo and reports the ten most confident findings, ranked.
 
 ## Configuration
 
@@ -55,22 +55,28 @@ Optional. Drop a `.stale-docs.json` in your repo root to override the defaults:
 ## FAQ
 
 **Does this slow down my edits?**
-The scanner runs in about 35ms on a medium repo. It skips ignored directories, caps at 500 doc files, and refuses to read anything over 1MB. You will not notice it.
+
+The scanner takes about 35ms on a medium repo. It skips ignored directories, stops at 500 doc files, and refuses to read anything over 1MB. You won't feel it.
 
 **What if the scanner crashes?**
-It doesn't, and if it somehow did, it fails silently and exits 0. A doc check is never allowed to break your edit.
+
+It exits 0 and stays quiet. The whole program runs inside one try/catch, which is inelegant and exactly right: a doc check is never allowed to break your edit.
 
 **Won't I get false positives?**
-The scanner reports *references*, not verdicts. If a doc mentions `parseArgs` and you just edited the file that exports it, that's worth a look — the agent does the actual judgment with the edit in context, and leaves accurate docs alone. Generic identifiers (`main`, `init`, `run`...) are filtered out so they don't trigger anything.
+
+The scanner reports references, and a reference is not a verdict. The agent that just made the edit decides whether each doc is actually wrong, and it leaves accurate docs alone. Generic names like `main` and `init` are filtered out so they never trigger anything.
 
 **Can it detect the old signature specifically?**
-No, and I won't pretend otherwise. The hook fires after the edit, so the scanner only sees the new state of the file. It finds every doc that references the changed file or its symbols; the agent — which just made the edit and knows exactly what changed — decides what's stale. Deterministic scanner, semantic judgment where the context lives.
+
+No. The hook runs after the edit, so the scanner only ever sees the new version of the file. I could have snapshotted old state and diffed signatures, but that's a cache with opinions, and it would be wrong often. Instead the scanner finds every doc that mentions the changed file, and the agent, which knows exactly what it changed, judges what's stale. The dumb part stays deterministic and the judgment happens where the context lives.
 
 **Does it rewrite my docs?**
-It patches the lines that are wrong and nothing else. The skill forbids rephrasing, reformatting, and section rewrites. If one flag changed, one flag changes in your README.
+
+It fixes the lines that are wrong and stops. The skill forbids rephrasing, reformatting, and section rewrites. If one flag changed, one flag changes in your README.
 
 **What about docstrings and JSDoc in other files?**
-Symbol references in any scanned markdown are covered. In-code docstrings in *other* source files aren't scanned by the hook — that's what `/stale-docs` audits are for.
+
+The hook only scans markdown. When you want a wider sweep, run `/stale-docs`.
 
 ## License
 
