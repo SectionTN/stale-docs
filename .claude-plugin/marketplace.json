@@ -4,6 +4,9 @@
     "name": "SectionTN",
     "url": "https://github.com/SectionTN"
   },
+  "metadata": {
+    "description": "Detects documentation made stale by code changes and patches it in the same commit."
+  },
   "plugins": [
     {
       "name": "stale-docs",
