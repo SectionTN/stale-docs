@@ -125,8 +125,7 @@ function walk(root, ignoreRes, limit) {
     }
     for (const entry of entries) {
       const childRel = rel === '.' ? entry.name : rel + '/' + entry.name;
-      if (matchesAny(childRel + (entry.isDirectory() ? '/' : ''), ignoreRes)) continue;
-      if (matchesAny(childRel, ignoreRes)) continue;
+      if (matchesAny(entry.isDirectory() ? childRel + '/' : childRel, ignoreRes)) continue;
       if (entry.isDirectory()) {
         stack.push(childRel);
       } else if (entry.isFile()) {
