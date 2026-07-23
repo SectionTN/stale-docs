@@ -334,6 +334,50 @@ function checkContent(sourceRel, content, docs) {
   return findings;
 }
 
+// Edit and MultiEdit carry the exact removed text; symbols in old strings
+// that survive nowhere in the new strings or the file were removed or renamed
+function removedSymbols(toolInput, sourceContent) {
+  const edits = Array.isArray(toolInput.edits)
+    ? toolInput.edits
+    : typeof toolInput.old_string === 'string' ? [toolInput] : [];
+  const oldSyms = new Set();
+  const newSyms = new Set();
+  for (const e of edits) {
+    if (typeof e.old_string === 'string') {
+      for (const s of extractSymbols(e.old_string)) oldSyms.add(s);
+    }
+    if (typeof e.new_string === 'string') {
+      for (const s of extractSymbols(e.new_string)) newSyms.add(s);
+    }
+  }
+  return [...oldSyms].filter((s) => !newSyms.has(s) && !sourceContent.includes(s));
+}
+
+function scanDocsForSymbols(docs, symbols, kind, sourceRel) {
+  const re = buildSymbolRegExp(symbols);
+  if (!re) return [];
+  const findings = [];
+  for (const doc of docs) {
+    const lines = doc.content.split('\n');
+    let inCode = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\s*(```|~~~)/.test(line)) {
+        inCode = !inCode;
+        continue;
+      }
+      const m = re.exec(line);
+      if (m) {
+        findings.push({
+          doc: doc.rel, line: i + 1, matched: m[1], kind,
+          inCode, confidence: ORPHAN_CONFIDENCE, source: sourceRel,
+        });
+      }
+    }
+  }
+  return findings;
+}
+
 // only lines that name the changed file get this check; the identifier may
 // exist elsewhere in the repo, so the phrasing stays scoped to this file
 function findDeadMentions(referenceFindings, docs, sourceContent) {
@@ -400,10 +444,13 @@ function runHook() {
   if (content === null) return;
 
   const references = checkContent(sourceRel, content, docs);
+  const removed = scanDocsForSymbols(
+    docs, removedSymbols(input.tool_input, content), 'removed', sourceRel
+  );
   const dead = findDeadMentions(references, docs, content);
   const seen = new Set();
   const merged = [];
-  for (const f of [...dead, ...references]) {
+  for (const f of [...removed, ...dead, ...references]) {
     const key = f.doc + ':' + f.line + ':' + f.matched;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -443,6 +490,13 @@ function runHook() {
     'sentences or sections describing code that no longer exists; rewrite the whole',
     'file from the source when most of it is stale.',
   ];
+  if (merged.some((f) => f.kind === 'removed' || f.kind === 'dead-mention')) {
+    parts.push(
+      '',
+      'Findings described as removed or no longer present are already checked',
+      'against the code. Delete those claims or repoint them to the new name.'
+    );
+  }
   if (rewriteCandidates.length) {
     parts.push('', 'These docs are mostly about the changed file, so consider a full rewrite:');
     for (const c of rewriteCandidates) parts.push('- ' + c);
