@@ -25,6 +25,13 @@ const MAX_HOOK_FINDINGS = 20;
 const AUDIT_LIMIT = 10;
 const MIN_SYMBOL_LENGTH = 3;
 
+// orphans outrank every reference tier: the scanner proved the target is gone
+const ORPHAN_CONFIDENCE = 5;
+
+const SOURCE_EXT = /\.(?:js|jsx|ts|tsx|mjs|cjs|py|go|rs|java|rb|c|h|cpp|hpp)$/;
+const BACKTICK_TOKEN = /`([^`\n]+)`/g;
+const IDENT_TOKEN = /[A-Za-z_$][\w$]*/g;
+
 // a doc this saturated with references is probably *about* the changed file
 const REWRITE_MIN_LINES = 3;
 const REWRITE_DENSITY = 0.3;
@@ -183,6 +190,82 @@ function buildSymbolRegExp(symbols) {
   return new RegExp('(?<![\\w$-])(' + alternatives + ')(?![\\w$])');
 }
 
+function collectBacktickTokens(line) {
+  BACKTICK_TOKEN.lastIndex = 0;
+  const tokens = [];
+  let m;
+  while ((m = BACKTICK_TOKEN.exec(line)) !== null) tokens.push(m[1]);
+  return tokens;
+}
+
+// path-like means a concrete repo-relative file name: not a glob, not a
+// phrase, not an absolute path or slash command
+function looksLikePath(token) {
+  if (/[\s*?{}]/.test(token) || token.startsWith('/')) return false;
+  return token.includes('/') || SOURCE_EXT.test(token);
+}
+
+function symbolToken(token) {
+  const bare = token.replace(/\(\)$/, '');
+  if (/^--[a-z][a-z0-9-]{2,}$/.test(bare)) return bare;
+  if (
+    /^[A-Za-z_$][\w$]*$/.test(bare) &&
+    bare.length >= MIN_SYMBOL_LENGTH &&
+    !STOP_WORDS.has(bare.toLowerCase())
+  ) {
+    return bare;
+  }
+  return null;
+}
+
+function tokenizeIdentifiers(content, into) {
+  IDENT_TOKEN.lastIndex = 0;
+  let m;
+  while ((m = IDENT_TOKEN.exec(content)) !== null) into.add(m[0]);
+  FLAG_PATTERN.lastIndex = 0;
+  while ((m = FLAG_PATTERN.exec(content)) !== null) into.add(m[1]);
+}
+
+function findOrphans(root, docs, filePaths, identifiers) {
+  const paths = new Set(filePaths);
+  const basenames = new Set(filePaths.map((rel) => path.basename(rel)));
+  const findings = [];
+  for (const doc of docs) {
+    const lines = doc.content.split('\n');
+    let inCode = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\s*(```|~~~)/.test(line)) {
+        inCode = !inCode;
+        continue;
+      }
+      // fenced blocks quote example code and output; backticks inside them
+      // are content, not references
+      if (inCode) continue;
+      for (const token of collectBacktickTokens(line)) {
+        if (looksLikePath(token)) {
+          const clean = token.replace(/^\.\//, '');
+          if (paths.has(clean) || basenames.has(path.basename(clean))) continue;
+          if (fs.existsSync(path.join(root, clean))) continue;
+          findings.push({
+            doc: doc.rel, line: i + 1, matched: token, kind: 'orphan-path',
+            inCode, confidence: ORPHAN_CONFIDENCE, source: null,
+          });
+        } else {
+          const sym = symbolToken(token);
+          if (sym && !identifiers.has(sym)) {
+            findings.push({
+              doc: doc.rel, line: i + 1, matched: token, kind: 'orphan-symbol',
+              inCode, confidence: ORPHAN_CONFIDENCE, source: null,
+            });
+          }
+        }
+      }
+    }
+  }
+  return findings;
+}
+
 // confidence: how likely a hit means the doc shows this code
 function score(kind, inCode) {
   if (kind === 'path') return inCode ? 4 : 2;
@@ -259,8 +342,20 @@ function checkFile(root, sourceRel, docs) {
 
 function describe(f) {
   const where = f.inCode ? 'fenced code block' : 'prose';
-  const what = f.kind === 'path' ? 'references' : 'mentions';
-  return `${f.doc}:${f.line} ${what} \`${f.matched}\` (${where})`;
+  switch (f.kind) {
+    case 'orphan-path':
+      return `${f.doc}:${f.line} references \`${f.matched}\`, which does not exist (${where})`;
+    case 'orphan-symbol':
+      return `${f.doc}:${f.line} mentions \`${f.matched}\`, which is not defined anywhere in the codebase (${where})`;
+    case 'dead-mention':
+      return `${f.doc}:${f.line} mentions \`${f.matched}\`, which no longer appears in this file (${where})`;
+    case 'removed':
+      return `${f.doc}:${f.line} mentions \`${f.matched}\`, which this edit removed or renamed (${where})`;
+    default: {
+      const what = f.kind === 'path' ? 'references' : 'mentions';
+      return `${f.doc}:${f.line} ${what} \`${f.matched}\` (${where})`;
+    }
+  }
 }
 
 function runHook() {
@@ -348,14 +443,18 @@ function runAudit() {
     return 0;
   }
 
-  const sources = walk(root, ignoreRes, MAX_SOURCE_FILES * 5)
-    .filter((rel) => matchesAny(rel, sourceRes))
-    .slice(0, MAX_SOURCE_FILES);
+  const files = walk(root, ignoreRes, MAX_SOURCE_FILES * 5);
+  const sources = files.filter((rel) => matchesAny(rel, sourceRes)).slice(0, MAX_SOURCE_FILES);
 
+  const identifiers = new Set();
   const all = [];
   for (const sourceRel of sources) {
-    all.push(...checkFile(root, sourceRel, docs));
+    const content = readSmallFile(path.join(root, sourceRel));
+    if (content === null) continue;
+    tokenizeIdentifiers(content, identifiers);
+    all.push(...checkContent(sourceRel, content, docs));
   }
+  all.push(...findOrphans(root, docs, files, identifiers));
 
   const best = new Map();
   for (const f of all) {
@@ -373,7 +472,7 @@ function runAudit() {
     return 0;
   }
   const out = ranked
-    .map((f, i) => `${i + 1}. ${describe(f)}, from ${f.source}`)
+    .map((f, i) => `${i + 1}. ${describe(f)}` + (f.source ? `, from ${f.source}` : ''))
     .join('\n');
   process.stdout.write(out + '\n');
   return 0;
