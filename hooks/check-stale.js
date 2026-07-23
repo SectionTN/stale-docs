@@ -334,10 +334,28 @@ function checkContent(sourceRel, content, docs) {
   return findings;
 }
 
-function checkFile(root, sourceRel, docs) {
-  const content = readSmallFile(path.join(root, sourceRel));
-  if (content === null) return [];
-  return checkContent(sourceRel, content, docs);
+// only lines that name the changed file get this check; the identifier may
+// exist elsewhere in the repo, so the phrasing stays scoped to this file
+function findDeadMentions(referenceFindings, docs, sourceContent) {
+  const docLines = new Map(docs.map((d) => [d.rel, d.content.split('\n')]));
+  const findings = [];
+  const seen = new Set();
+  for (const f of referenceFindings) {
+    if (f.kind !== 'path') continue;
+    const line = docLines.get(f.doc)[f.line - 1];
+    for (const token of collectBacktickTokens(line)) {
+      const sym = symbolToken(token);
+      if (!sym || sourceContent.includes(sym)) continue;
+      const key = f.doc + ':' + f.line + ':' + sym;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      findings.push({
+        doc: f.doc, line: f.line, matched: sym, kind: 'dead-mention',
+        inCode: f.inCode, confidence: ORPHAN_CONFIDENCE, source: f.source,
+      });
+    }
+  }
+  return findings;
 }
 
 function describe(f) {
@@ -378,17 +396,29 @@ function runHook() {
   const docs = collectDocs(root, config, sourceRel);
   if (!docs.length) return;
 
-  const all = checkFile(root, sourceRel, docs);
-  if (!all.length) return;
+  const content = readSmallFile(path.join(root, sourceRel));
+  if (content === null) return;
 
-  const findings = all
+  const references = checkContent(sourceRel, content, docs);
+  const dead = findDeadMentions(references, docs, content);
+  const seen = new Set();
+  const merged = [];
+  for (const f of [...dead, ...references]) {
+    const key = f.doc + ':' + f.line + ':' + f.matched;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(f);
+  }
+  if (!merged.length) return;
+
+  const findings = merged
     .slice()
     .sort((a, b) => b.confidence - a.confidence)
     .slice(0, MAX_HOOK_FINDINGS);
 
   const lineCount = new Map(docs.map((d) => [d.rel, d.content.split('\n').length]));
   const hitLines = new Map();
-  for (const f of all) {
+  for (const f of merged) {
     if (!hitLines.has(f.doc)) hitLines.set(f.doc, new Set());
     hitLines.get(f.doc).add(f.line);
   }
