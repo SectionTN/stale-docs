@@ -242,15 +242,19 @@ function collectDocs(root, config, excludeRel) {
   return docs;
 }
 
-function checkFile(root, sourceRel, docs) {
-  const content = readSmallFile(path.join(root, sourceRel));
-  if (content === null) return [];
+function checkContent(sourceRel, content, docs) {
   const symbolRe = buildSymbolRegExp(extractSymbols(content));
   const findings = [];
   for (const doc of docs) {
     findings.push(...scanDoc(doc.rel, doc.content, sourceRel, symbolRe));
   }
   return findings;
+}
+
+function checkFile(root, sourceRel, docs) {
+  const content = readSmallFile(path.join(root, sourceRel));
+  if (content === null) return [];
+  return checkContent(sourceRel, content, docs);
 }
 
 function describe(f) {
@@ -341,7 +345,7 @@ function runAudit() {
   const docs = collectDocs(root, config, null);
   if (!docs.length) {
     process.stdout.write('no doc files found\n');
-    return;
+    return 0;
   }
 
   const sources = walk(root, ignoreRes, MAX_SOURCE_FILES * 5)
@@ -366,21 +370,24 @@ function runAudit() {
 
   if (!ranked.length) {
     process.stdout.write('no stale doc references found\n');
-    return;
+    return 0;
   }
   const out = ranked
     .map((f, i) => `${i + 1}. ${describe(f)}, from ${f.source}`)
     .join('\n');
   process.stdout.write(out + '\n');
+  return 0;
 }
 
+let exitCode = 0;
 try {
   if (process.argv.includes('--audit')) {
-    runAudit();
+    exitCode = runAudit();
   } else {
     runHook();
   }
 } catch {
-  // a doc-staleness check must never break the user's edit
+  // a doc-staleness check must never break the user's edit or block a merge
+  exitCode = 0;
 }
-process.exit(0);
+process.exit(exitCode);
