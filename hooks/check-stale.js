@@ -517,13 +517,15 @@ function runHook() {
 }
 
 function runAudit() {
+  const jsonMode = process.argv.includes('--json');
+  const ciMode = process.argv.includes('--ci');
   const root = process.cwd();
   const config = loadConfig(root);
   const sourceRes = compileGlobs(config.sourceGlobs);
   const ignoreRes = compileGlobs(config.ignore);
   const docs = collectDocs(root, config, null);
   if (!docs.length) {
-    process.stdout.write('no doc files found\n');
+    process.stdout.write(jsonMode ? '[]\n' : 'no doc files found\n');
     return 0;
   }
 
@@ -547,18 +549,36 @@ function runAudit() {
     if (!prev || f.confidence > prev.confidence) best.set(key, f);
   }
 
-  const ranked = [...best.values()]
-    .sort((a, b) => b.confidence - a.confidence || a.doc.localeCompare(b.doc) || a.line - b.line)
-    .slice(0, AUDIT_LIMIT);
+  const deduped = [...best.values()]
+    .sort((a, b) => b.confidence - a.confidence || a.doc.localeCompare(b.doc) || a.line - b.line);
 
-  if (!ranked.length) {
-    process.stdout.write('no stale doc references found\n');
-    return 0;
+  if (jsonMode) {
+    // machines get everything; a capped list misleads
+    const rows = deduped.map((f) => ({
+      doc: f.doc,
+      line: f.line,
+      matched: f.matched,
+      kind: f.kind.startsWith('orphan') ? 'orphan' : 'reference',
+      context: f.inCode ? 'code' : 'prose',
+      source: f.source,
+      confidence: f.confidence,
+    }));
+    process.stdout.write(JSON.stringify(rows) + '\n');
+  } else {
+    const ranked = deduped.slice(0, AUDIT_LIMIT);
+    if (!ranked.length) {
+      process.stdout.write('no stale doc references found\n');
+    } else {
+      const out = ranked
+        .map((f, i) => `${i + 1}. ${describe(f)}` + (f.source ? `, from ${f.source}` : ''))
+        .join('\n');
+      process.stdout.write(out + '\n');
+    }
   }
-  const out = ranked
-    .map((f, i) => `${i + 1}. ${describe(f)}` + (f.source ? `, from ${f.source}` : ''))
-    .join('\n');
-  process.stdout.write(out + '\n');
+
+  // path orphans are proof; symbol orphans stay advisory so hypothetical
+  // example code in docs cannot flap a build
+  if (ciMode && deduped.some((f) => f.kind === 'orphan-path')) return 1;
   return 0;
 }
 
