@@ -37,6 +37,8 @@ If a symbol was renamed, update every occurrence of it in the affected docs. A h
 
 Changelogs are history. Never edit past entries; if the repo keeps an unreleased or pending section, note the change there instead.
 
+Some findings arrive already proven. When the scanner says a reference does not exist, is not defined anywhere in the codebase, no longer appears in the file, or was removed or renamed by the edit, it has checked the code itself. Skip verification for those: delete the claim, or repoint it to the replacement if the edit shows one.
+
 If you cannot verify a claim from the code at all (it describes deployment, people, or history the code cannot show), leave it alone and flag it in your summary rather than guessing.
 
 ## Output

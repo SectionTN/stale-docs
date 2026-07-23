@@ -34,11 +34,11 @@ stale-docs/
 ```
 
 1. A PostToolUse hook fires whenever a source file gets edited. The extension list is configurable; the default covers js, ts, py, go, rs, and the other usual suspects.
-2. `check-stale.js` pulls the exported names out of the changed file (functions, classes, CLI flags) and looks for them in your markdown, along with the file's path. A hit inside a fenced code block counts for more than a mention in prose.
+2. `check-stale.js` pulls the exported names out of the changed file (functions, classes, CLI flags) and looks for them in your markdown, along with the file's path. A hit inside a fenced code block counts for more than a mention in prose. For an Edit, the scanner also reads the replaced text from the hook input, so it knows exactly which symbols the edit removed and reports doc mentions of them as removed or renamed. It also flags identifiers that a doc pairs with the file but that no longer appear in it.
 3. If anything references the changed code, the hook hands the agent a list of `file:line` locations and tells it to verify each one against the source, never against the doc itself. Repairs happen at the smallest scale that makes the doc true: wrong details get patched, claims about removed code get deleted, and a file that is mostly stale gets rewritten from the code. The fixes are staged with the code so both land in one commit.
 4. If nothing references the changed code, the hook prints nothing. You will forget it's installed until the day it saves you.
 
-There is also `/stale-docs`, which audits the entire repo and reports the ten most confident findings, ranked.
+There is also `/stale-docs`, which audits the entire repo and reports the ten most confident findings, ranked. The audit additionally hunts orphans: doc references to files that do not exist and symbols defined nowhere in the codebase. Orphans are proven stale, so they outrank everything else.
 
 ## See it work
 
@@ -92,6 +92,16 @@ Optional. Drop a `.stale-docs.json` in your repo root to override the defaults:
 }
 ```
 
+## CI
+
+The audit runs anywhere Node runs, so you can enforce it on people who edit without a hook watching them:
+
+```yaml
+- run: node path/to/stale-docs/hooks/check-stale.js --audit --ci
+```
+
+`--ci` exits 1 when a doc references a file that does not exist, and 0 otherwise. Only proven dead paths fail the build; symbol findings and plain references stay advisory, because docs are allowed to show hypothetical examples and a flaky check gets deleted from the workflow within a week. Add `--json` to get every finding as machine-readable output, uncapped.
+
 ## FAQ
 
 **Does this slow down my edits?**
@@ -108,7 +118,7 @@ The scanner reports references, and a reference is not a verdict. The agent that
 
 **Can it detect the old signature specifically?**
 
-No. The hook runs after the edit, so the scanner only ever sees the new version of the file. I could have snapshotted old state and diffed signatures, but that's a cache with opinions, and it would be wrong often. Instead the scanner finds every doc that mentions the changed file, and the agent, which knows exactly what it changed, judges what's stale. The dumb part stays deterministic and the judgment happens where the context lives.
+For an Edit, yes. The hook input carries the exact text the edit replaced, so the scanner extracts symbols from the removed code, checks they survive nowhere in the new code or the file, and reports doc mentions of them as removed or renamed. No snapshots, no state, just the diff the hook already receives. A Write carries no old text, so there the scanner falls back to reporting references and flagging identifiers the doc pairs with the file that no longer appear in it. Either way the agent that made the change does the final judgment on anything not proven.
 
 **Does it rewrite my docs?**
 

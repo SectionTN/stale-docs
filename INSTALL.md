@@ -37,6 +37,16 @@ Then add it as a local marketplace:
 
 You can also run `/stale-docs` for a full-repo audit at any time.
 
+## Scanner flags
+
+The scanner doubles as a standalone CLI, run from your repo root:
+
+| Flag | Effect |
+|------|--------|
+| `--audit` | full-repo scan, ten most confident findings, orphans first |
+| `--audit --json` | every finding as a JSON array, uncapped |
+| `--audit --ci` | exit 1 when a doc references a file that does not exist |
+
 ## Configuration
 
 Everything works with zero config. To customize, create `.stale-docs.json` in the repo root:
