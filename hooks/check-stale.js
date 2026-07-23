@@ -25,6 +25,10 @@ const MAX_HOOK_FINDINGS = 20;
 const AUDIT_LIMIT = 10;
 const MIN_SYMBOL_LENGTH = 3;
 
+// a doc this saturated with references is probably *about* the changed file
+const REWRITE_MIN_LINES = 3;
+const REWRITE_DENSITY = 0.3;
+
 // identifiers too generic to prove a doc refers to *this* file
 const STOP_WORDS = new Set([
   'main', 'init', 'new', 'get', 'set', 'run', 'test', 'index', 'data',
@@ -275,24 +279,51 @@ function runHook() {
   const docs = collectDocs(root, config, sourceRel);
   if (!docs.length) return;
 
-  const findings = checkFile(root, sourceRel, docs)
+  const all = checkFile(root, sourceRel, docs);
+  if (!all.length) return;
+
+  const findings = all
+    .slice()
     .sort((a, b) => b.confidence - a.confidence)
     .slice(0, MAX_HOOK_FINDINGS);
-  if (!findings.length) return;
+
+  const lineCount = new Map(docs.map((d) => [d.rel, d.content.split('\n').length]));
+  const hitLines = new Map();
+  for (const f of all) {
+    if (!hitLines.has(f.doc)) hitLines.set(f.doc, new Set());
+    hitLines.get(f.doc).add(f.line);
+  }
+  const rewriteCandidates = [];
+  for (const [doc, hits] of hitLines) {
+    const total = lineCount.get(doc);
+    if (hits.size >= REWRITE_MIN_LINES && hits.size / total >= REWRITE_DENSITY) {
+      rewriteCandidates.push(`${doc} (${hits.size} of ${total} lines reference it)`);
+    }
+  }
 
   const list = findings.map((f) => '- ' + describe(f)).join('\n');
-  const context = [
+  const parts = [
     `stale-docs: documentation references \`${sourceRel}\`, which was just modified.`,
     '',
     list,
     '',
-    'Before finishing this task, verify each reference against the edit you just made.',
-    'If the change altered names, signatures, CLI flags, defaults, or behavior shown in',
-    'these docs, patch them minimally: update code blocks to match the new code exactly,',
-    'keep the surrounding wording as-is, and stage the doc fixes together with the code',
-    'change so they land in the same commit. If a reference is still accurate, leave it',
-    'alone. The stale-docs skill has patching guidelines.',
-  ].join('\n');
+    'Check every reference against the current source code, not against what the',
+    'doc claims. The code is the only authority; keep a doc statement only if you',
+    'can reproduce it from the source. Repair at the smallest scale that makes the',
+    'doc true: patch names, signatures, flags, and defaults that changed; delete',
+    'sentences or sections describing code that no longer exists; rewrite the whole',
+    'file from the source when most of it is stale.',
+  ];
+  if (rewriteCandidates.length) {
+    parts.push('', 'These docs are mostly about the changed file, so consider a full rewrite:');
+    for (const c of rewriteCandidates) parts.push('- ' + c);
+  }
+  parts.push(
+    '',
+    'Leave accurate lines untouched. Stage the doc fixes with the code change so',
+    'they land in the same commit. The stale-docs skill has the full rules.'
+  );
+  const context = parts.join('\n');
 
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
