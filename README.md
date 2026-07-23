@@ -35,14 +35,14 @@ stale-docs/
 
 1. A PostToolUse hook fires whenever a source file gets edited. The extension list is configurable; the default covers js, ts, py, go, rs, and the other usual suspects.
 2. `check-stale.js` pulls the exported names out of the changed file (functions, classes, CLI flags) and looks for them in your markdown, along with the file's path. A hit inside a fenced code block counts for more than a mention in prose.
-3. If anything references the changed code, the hook hands the agent a list of `file:line` locations and tells it to check each one against the edit it just made. Lines that went stale get patched and staged with the code.
+3. If anything references the changed code, the hook hands the agent a list of `file:line` locations and tells it to verify each one against the source, never against the doc itself. Repairs happen at the smallest scale that makes the doc true: wrong details get patched, claims about removed code get deleted, and a file that is mostly stale gets rewritten from the code. The fixes are staged with the code so both land in one commit.
 4. If nothing references the changed code, the hook prints nothing. You will forget it's installed until the day it saves you.
 
 There is also `/stale-docs`, which audits the entire repo and reports the ten most confident findings, ranked.
 
 ## See it work
 
-This repo dogfoods itself. While I was cleaning up the scanner, the installed plugin caught the edit and injected this into the session:
+This repo dogfoods itself. While I was working on the scanner, the installed plugin caught the edit and injected this into the session:
 
 ```
 stale-docs: documentation references `hooks/check-stale.js`, which was just modified.
@@ -50,10 +50,15 @@ stale-docs: documentation references `hooks/check-stale.js`, which was just modi
 - README.md:28 references `check-stale.js` (fenced code block)
 - README.md:37 references `check-stale.js` (prose)
 
-Before finishing this task, verify each reference against the edit you just made.
+Check every reference against the current source code, not against what the
+doc claims. The code is the only authority; keep a doc statement only if you
+can reproduce it from the source. Repair at the smallest scale that makes the
+doc true: patch names, signatures, flags, and defaults that changed; delete
+sentences or sections describing code that no longer exists; rewrite the whole
+file from the source when most of it is stale.
 ```
 
-That edit was internal cleanup, both references were still accurate, so nothing got patched. Flag, verify, stay quiet.
+That edit was internal cleanup, the references were still accurate, so nothing got touched. Flag, verify, stay quiet.
 
 You can also run the scanner by hand, no Claude required. It reads the same JSON the hook receives:
 
@@ -107,7 +112,11 @@ No. The hook runs after the edit, so the scanner only ever sees the new version 
 
 **Does it rewrite my docs?**
 
-It fixes the lines that are wrong and stops. The skill forbids rephrasing, reformatting, and section rewrites. If one flag changed, one flag changes in your README.
+Only when the file has earned it. The default repair is the smallest one that makes the doc true: a renamed flag gets one word changed, a paragraph about a deleted function gets removed. A full rewrite happens when most of the file went stale (the scanner flags docs where a large share of lines reference the changed file), and even then every fact in the new version has to be reproducible from the code. Nothing ever gets rephrased for style.
+
+**Why does it trust the code over the doc?**
+
+Because the doc is the thing under suspicion. A doc is a cache of the codebase, and like every cache it goes stale silently. So the skill never treats a doc sentence as evidence, not even to validate another doc. Claims get checked against the source or they get flagged.
 
 **What about docstrings and JSDoc in other files?**
 
