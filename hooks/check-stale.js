@@ -25,6 +25,13 @@ const MAX_HOOK_FINDINGS = 20;
 const AUDIT_LIMIT = 10;
 const MIN_SYMBOL_LENGTH = 3;
 
+// orphans outrank every reference tier: the scanner proved the target is gone
+const ORPHAN_CONFIDENCE = 5;
+
+const SOURCE_EXT = /\.(?:js|jsx|ts|tsx|mjs|cjs|py|go|rs|java|rb|c|h|cpp|hpp)$/;
+const BACKTICK_TOKEN = /`([^`\n]+)`/g;
+const IDENT_TOKEN = /[A-Za-z_$][\w$]*/g;
+
 // a doc this saturated with references is probably *about* the changed file
 const REWRITE_MIN_LINES = 3;
 const REWRITE_DENSITY = 0.3;
@@ -183,6 +190,82 @@ function buildSymbolRegExp(symbols) {
   return new RegExp('(?<![\\w$-])(' + alternatives + ')(?![\\w$])');
 }
 
+function collectBacktickTokens(line) {
+  BACKTICK_TOKEN.lastIndex = 0;
+  const tokens = [];
+  let m;
+  while ((m = BACKTICK_TOKEN.exec(line)) !== null) tokens.push(m[1]);
+  return tokens;
+}
+
+// path-like means a concrete repo-relative file name: not a glob, not a
+// phrase, not an absolute path or slash command
+function looksLikePath(token) {
+  if (/[\s*?{}]/.test(token) || token.startsWith('/')) return false;
+  return token.includes('/') || SOURCE_EXT.test(token);
+}
+
+function symbolToken(token) {
+  const bare = token.replace(/\(\)$/, '');
+  if (/^--[a-z][a-z0-9-]{2,}$/.test(bare)) return bare;
+  if (
+    /^[A-Za-z_$][\w$]*$/.test(bare) &&
+    bare.length >= MIN_SYMBOL_LENGTH &&
+    !STOP_WORDS.has(bare.toLowerCase())
+  ) {
+    return bare;
+  }
+  return null;
+}
+
+function tokenizeIdentifiers(content, into) {
+  IDENT_TOKEN.lastIndex = 0;
+  let m;
+  while ((m = IDENT_TOKEN.exec(content)) !== null) into.add(m[0]);
+  FLAG_PATTERN.lastIndex = 0;
+  while ((m = FLAG_PATTERN.exec(content)) !== null) into.add(m[1]);
+}
+
+function findOrphans(root, docs, filePaths, identifiers) {
+  const paths = new Set(filePaths);
+  const basenames = new Set(filePaths.map((rel) => path.basename(rel)));
+  const findings = [];
+  for (const doc of docs) {
+    const lines = doc.content.split('\n');
+    let inCode = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\s*(```|~~~)/.test(line)) {
+        inCode = !inCode;
+        continue;
+      }
+      // fenced blocks quote example code and output; backticks inside them
+      // are content, not references
+      if (inCode) continue;
+      for (const token of collectBacktickTokens(line)) {
+        if (looksLikePath(token)) {
+          const clean = token.replace(/^\.\//, '');
+          if (paths.has(clean) || basenames.has(path.basename(clean))) continue;
+          if (fs.existsSync(path.join(root, clean))) continue;
+          findings.push({
+            doc: doc.rel, line: i + 1, matched: token, kind: 'orphan-path',
+            inCode, confidence: ORPHAN_CONFIDENCE, source: null,
+          });
+        } else {
+          const sym = symbolToken(token);
+          if (sym && !identifiers.has(sym)) {
+            findings.push({
+              doc: doc.rel, line: i + 1, matched: token, kind: 'orphan-symbol',
+              inCode, confidence: ORPHAN_CONFIDENCE, source: null,
+            });
+          }
+        }
+      }
+    }
+  }
+  return findings;
+}
+
 // confidence: how likely a hit means the doc shows this code
 function score(kind, inCode) {
   if (kind === 'path') return inCode ? 4 : 2;
@@ -242,9 +325,7 @@ function collectDocs(root, config, excludeRel) {
   return docs;
 }
 
-function checkFile(root, sourceRel, docs) {
-  const content = readSmallFile(path.join(root, sourceRel));
-  if (content === null) return [];
+function checkContent(sourceRel, content, docs) {
   const symbolRe = buildSymbolRegExp(extractSymbols(content));
   const findings = [];
   for (const doc of docs) {
@@ -253,10 +334,90 @@ function checkFile(root, sourceRel, docs) {
   return findings;
 }
 
+// Edit and MultiEdit carry the exact removed text; symbols in old strings
+// that survive nowhere in the new strings or the file were removed or renamed
+function removedSymbols(toolInput, sourceContent) {
+  const edits = Array.isArray(toolInput.edits)
+    ? toolInput.edits
+    : typeof toolInput.old_string === 'string' ? [toolInput] : [];
+  const oldSyms = new Set();
+  const newSyms = new Set();
+  for (const e of edits) {
+    if (typeof e.old_string === 'string') {
+      for (const s of extractSymbols(e.old_string)) oldSyms.add(s);
+    }
+    if (typeof e.new_string === 'string') {
+      for (const s of extractSymbols(e.new_string)) newSyms.add(s);
+    }
+  }
+  return [...oldSyms].filter((s) => !newSyms.has(s) && !sourceContent.includes(s));
+}
+
+function scanDocsForSymbols(docs, symbols, kind, sourceRel) {
+  const re = buildSymbolRegExp(symbols);
+  if (!re) return [];
+  const findings = [];
+  for (const doc of docs) {
+    const lines = doc.content.split('\n');
+    let inCode = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\s*(```|~~~)/.test(line)) {
+        inCode = !inCode;
+        continue;
+      }
+      const m = re.exec(line);
+      if (m) {
+        findings.push({
+          doc: doc.rel, line: i + 1, matched: m[1], kind,
+          inCode, confidence: ORPHAN_CONFIDENCE, source: sourceRel,
+        });
+      }
+    }
+  }
+  return findings;
+}
+
+// only lines that name the changed file get this check; the identifier may
+// exist elsewhere in the repo, so the phrasing stays scoped to this file
+function findDeadMentions(referenceFindings, docs, sourceContent) {
+  const docLines = new Map(docs.map((d) => [d.rel, d.content.split('\n')]));
+  const findings = [];
+  const seen = new Set();
+  for (const f of referenceFindings) {
+    if (f.kind !== 'path') continue;
+    const line = docLines.get(f.doc)[f.line - 1];
+    for (const token of collectBacktickTokens(line)) {
+      const sym = symbolToken(token);
+      if (!sym || sourceContent.includes(sym)) continue;
+      const key = f.doc + ':' + f.line + ':' + sym;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      findings.push({
+        doc: f.doc, line: f.line, matched: sym, kind: 'dead-mention',
+        inCode: f.inCode, confidence: ORPHAN_CONFIDENCE, source: f.source,
+      });
+    }
+  }
+  return findings;
+}
+
 function describe(f) {
   const where = f.inCode ? 'fenced code block' : 'prose';
-  const what = f.kind === 'path' ? 'references' : 'mentions';
-  return `${f.doc}:${f.line} ${what} \`${f.matched}\` (${where})`;
+  switch (f.kind) {
+    case 'orphan-path':
+      return `${f.doc}:${f.line} references \`${f.matched}\`, which does not exist (${where})`;
+    case 'orphan-symbol':
+      return `${f.doc}:${f.line} mentions \`${f.matched}\`, which is not defined anywhere in the codebase (${where})`;
+    case 'dead-mention':
+      return `${f.doc}:${f.line} mentions \`${f.matched}\`, which no longer appears in this file (${where})`;
+    case 'removed':
+      return `${f.doc}:${f.line} mentions \`${f.matched}\`, which this edit removed or renamed (${where})`;
+    default: {
+      const what = f.kind === 'path' ? 'references' : 'mentions';
+      return `${f.doc}:${f.line} ${what} \`${f.matched}\` (${where})`;
+    }
+  }
 }
 
 function runHook() {
@@ -279,17 +440,32 @@ function runHook() {
   const docs = collectDocs(root, config, sourceRel);
   if (!docs.length) return;
 
-  const all = checkFile(root, sourceRel, docs);
-  if (!all.length) return;
+  const content = readSmallFile(path.join(root, sourceRel));
+  if (content === null) return;
 
-  const findings = all
+  const references = checkContent(sourceRel, content, docs);
+  const removed = scanDocsForSymbols(
+    docs, removedSymbols(input.tool_input, content), 'removed', sourceRel
+  );
+  const dead = findDeadMentions(references, docs, content);
+  const seen = new Set();
+  const merged = [];
+  for (const f of [...removed, ...dead, ...references]) {
+    const key = f.doc + ':' + f.line + ':' + f.matched;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(f);
+  }
+  if (!merged.length) return;
+
+  const findings = merged
     .slice()
     .sort((a, b) => b.confidence - a.confidence)
     .slice(0, MAX_HOOK_FINDINGS);
 
   const lineCount = new Map(docs.map((d) => [d.rel, d.content.split('\n').length]));
   const hitLines = new Map();
-  for (const f of all) {
+  for (const f of merged) {
     if (!hitLines.has(f.doc)) hitLines.set(f.doc, new Set());
     hitLines.get(f.doc).add(f.line);
   }
@@ -314,6 +490,13 @@ function runHook() {
     'sentences or sections describing code that no longer exists; rewrite the whole',
     'file from the source when most of it is stale.',
   ];
+  if (merged.some((f) => f.kind === 'removed' || f.kind === 'dead-mention')) {
+    parts.push(
+      '',
+      'Findings described as removed or no longer present are already checked',
+      'against the code. Delete those claims or repoint them to the new name.'
+    );
+  }
   if (rewriteCandidates.length) {
     parts.push('', 'These docs are mostly about the changed file, so consider a full rewrite:');
     for (const c of rewriteCandidates) parts.push('- ' + c);
@@ -334,24 +517,30 @@ function runHook() {
 }
 
 function runAudit() {
+  const jsonMode = process.argv.includes('--json');
+  const ciMode = process.argv.includes('--ci');
   const root = process.cwd();
   const config = loadConfig(root);
   const sourceRes = compileGlobs(config.sourceGlobs);
   const ignoreRes = compileGlobs(config.ignore);
   const docs = collectDocs(root, config, null);
   if (!docs.length) {
-    process.stdout.write('no doc files found\n');
-    return;
+    process.stdout.write(jsonMode ? '[]\n' : 'no doc files found\n');
+    return 0;
   }
 
-  const sources = walk(root, ignoreRes, MAX_SOURCE_FILES * 5)
-    .filter((rel) => matchesAny(rel, sourceRes))
-    .slice(0, MAX_SOURCE_FILES);
+  const files = walk(root, ignoreRes, MAX_SOURCE_FILES * 5);
+  const sources = files.filter((rel) => matchesAny(rel, sourceRes)).slice(0, MAX_SOURCE_FILES);
 
+  const identifiers = new Set();
   const all = [];
   for (const sourceRel of sources) {
-    all.push(...checkFile(root, sourceRel, docs));
+    const content = readSmallFile(path.join(root, sourceRel));
+    if (content === null) continue;
+    tokenizeIdentifiers(content, identifiers);
+    all.push(...checkContent(sourceRel, content, docs));
   }
+  all.push(...findOrphans(root, docs, files, identifiers));
 
   const best = new Map();
   for (const f of all) {
@@ -360,27 +549,48 @@ function runAudit() {
     if (!prev || f.confidence > prev.confidence) best.set(key, f);
   }
 
-  const ranked = [...best.values()]
-    .sort((a, b) => b.confidence - a.confidence || a.doc.localeCompare(b.doc) || a.line - b.line)
-    .slice(0, AUDIT_LIMIT);
+  const deduped = [...best.values()]
+    .sort((a, b) => b.confidence - a.confidence || a.doc.localeCompare(b.doc) || a.line - b.line);
 
-  if (!ranked.length) {
-    process.stdout.write('no stale doc references found\n');
-    return;
+  if (jsonMode) {
+    // machines get everything; a capped list misleads
+    const rows = deduped.map((f) => ({
+      doc: f.doc,
+      line: f.line,
+      matched: f.matched,
+      kind: f.kind.startsWith('orphan') ? 'orphan' : 'reference',
+      context: f.inCode ? 'code' : 'prose',
+      source: f.source,
+      confidence: f.confidence,
+    }));
+    process.stdout.write(JSON.stringify(rows) + '\n');
+  } else {
+    const ranked = deduped.slice(0, AUDIT_LIMIT);
+    if (!ranked.length) {
+      process.stdout.write('no stale doc references found\n');
+    } else {
+      const out = ranked
+        .map((f, i) => `${i + 1}. ${describe(f)}` + (f.source ? `, from ${f.source}` : ''))
+        .join('\n');
+      process.stdout.write(out + '\n');
+    }
   }
-  const out = ranked
-    .map((f, i) => `${i + 1}. ${describe(f)}, from ${f.source}`)
-    .join('\n');
-  process.stdout.write(out + '\n');
+
+  // path orphans are proof; symbol orphans stay advisory so hypothetical
+  // example code in docs cannot flap a build
+  if (ciMode && deduped.some((f) => f.kind === 'orphan-path')) return 1;
+  return 0;
 }
 
+let exitCode = 0;
 try {
   if (process.argv.includes('--audit')) {
-    runAudit();
+    exitCode = runAudit();
   } else {
     runHook();
   }
 } catch {
-  // a doc-staleness check must never break the user's edit
+  // a doc-staleness check must never break the user's edit or block a merge
+  exitCode = 0;
 }
-process.exit(0);
+process.exit(exitCode);

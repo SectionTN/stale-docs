@@ -1,6 +1,6 @@
 {
   "name": "stale-docs",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Detects documentation made stale by code changes and patches it in the same commit. Your docs can never lie again.",
   "author": {
     "name": "SectionTN",
