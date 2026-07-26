@@ -97,15 +97,15 @@ Set `"enabled": false` to mute the hook in one repo while keeping the plugin ins
 
 ## CI
 
-The audit runs anywhere Node runs, so you can enforce it on people who edit without a hook watching them. The scanner is a single file with zero dependencies; your workflow just needs to fetch it. Pin a release tag, never main, so my updates cannot change your build behind your back:
+The audit runs anywhere Node runs, so you can enforce it on people who edit without a hook watching them. The scanner is a single file with zero dependencies; your workflow just needs to fetch it. Every release ships it as an asset, so this always grabs the newest version:
 
 ```yaml
 - uses: actions/checkout@v4
-- run: curl -fsSL https://raw.githubusercontent.com/SectionTN/stale-docs/v0.2.0/hooks/check-stale.js -o /tmp/check-stale.js
+- run: curl -fsSL https://github.com/SectionTN/stale-docs/releases/latest/download/check-stale.js -o /tmp/check-stale.js
 - run: node /tmp/check-stale.js --audit --ci
 ```
 
-If you would rather not fetch anything in CI, copy `hooks/check-stale.js` into your repo and run it from there. It has no dependencies to keep in sync.
+If your build should never change until you say so, pin a version by swapping `latest/download` for `download/v0.2.0`. And if you would rather not fetch anything in CI at all, copy `hooks/check-stale.js` into your repo and run it from there. It has no dependencies to keep in sync.
 
 `--ci` exits 1 when a doc references a file that does not exist, and 0 otherwise. Only proven dead paths fail the build; symbol findings and plain references stay advisory, because docs are allowed to show hypothetical examples and a flaky check gets deleted from the workflow within a week. Add `--json` to get every finding as machine-readable output, uncapped.
 
