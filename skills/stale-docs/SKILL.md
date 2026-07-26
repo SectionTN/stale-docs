@@ -23,7 +23,7 @@ Patch when the claim is right about the wrong details: a renamed flag, a changed
 
 Delete when the claim describes something the code no longer has: a removed function, a dropped option, behavior that no longer exists. Remove the whole sentence, list item, or section cleanly, and fix anything that referred to it. A doc that says nothing beats a doc that lies.
 
-Rewrite when most of the file is stale. If patching would touch more lines than it leaves alone, or the hook flagged the doc as mostly about the changed file, rebuild the file from the source code. Keep the original headings and structure where they still fit, but derive every fact in the new version from the code, never from the old doc.
+Rewrite when most of the file is stale. If patching would touch more lines than it leaves alone, or the hook flagged the doc as mostly about the changed file, rebuild the file from the source code. Keep the original headings and structure where they still fit, but derive every fact in the new version from the code, never from the old doc. Write the new version in the original author's voice, not your default one; the diff should read like the maintainer finally sat down and did it. Sections the code cannot speak to at all, like licenses, badges, credits, and external links, get carried over verbatim rather than rederived or dropped, and flagged if they look suspect.
 
 ## Rules
 
