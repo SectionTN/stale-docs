@@ -201,9 +201,11 @@ function collectBacktickTokens(line) {
 }
 
 // path-like means a concrete repo-relative file name: not a glob, not a
-// phrase, not an absolute path or slash command
+// phrase, not an absolute path or slash command, and not a URL fragment or
+// directory mention, which is why a file extension is required
 function looksLikePath(token) {
   if (/[\s*?{}]/.test(token) || token.startsWith('/')) return false;
+  if (!/\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(token)) return false;
   return token.includes('/') || SOURCE_EXT.test(token);
 }
 

@@ -113,6 +113,13 @@ function tempFixture(mutate) {
   check('audit reports symbol orphan', r.stdout.includes('removedHelper') && r.stdout.includes('not defined anywhere'), r.stdout.slice(0, 300));
 }
 
+// audit: backticked url fragments and extension-less tokens are not path orphans
+{
+  const r = run(['--audit']);
+  check('url fragment is not a path orphan', !r.stdout.includes('latest/download'), r.stdout.slice(0, 300));
+  check('version suffix is not a path orphan', !r.stdout.includes('download/v1.0.0'), r.stdout.slice(0, 300));
+}
+
 // audit: --ci gates on dead paths only
 {
   const r = run(['--audit', '--ci']);

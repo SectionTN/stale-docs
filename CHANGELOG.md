@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1 - 2026-07-26
+
+- path orphan detection now requires a file extension starting with a letter, so backticked URL fragments, directory mentions, and version suffixes like `download/v1.0.0` no longer fail the `--ci` gate. Found by this repo's own CI flagging its own changelog, which is the plugin working as intended on the wrong target.
+
 ## 0.3.0 - 2026-07-26
 
 - `enabled` config key: set `false` in `.stale-docs.json` to mute the hook in one repo; the `/stale-docs` audit still runs
