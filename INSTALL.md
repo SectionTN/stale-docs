@@ -53,6 +53,7 @@ Everything works with zero config. To customize, create `.stale-docs.json` in th
 
 | Key | Default | Meaning |
 |-----|---------|---------|
+| `enabled` | `true` | set `false` to mute the hook in this repo; the `/stale-docs` audit still runs |
 | `sourceGlobs` | `**/*.{js,jsx,ts,tsx,mjs,cjs,py,go,rs,java,rb,c,h,cpp,hpp}` | files whose edits trigger the check |
 | `docGlobs` | `README.md`, `*.md`, `docs/**/*.md` | docs that get scanned |
 | `ignore` | `node_modules`, `.git`, `dist`, `build`, `vendor`, `target` | never walked or scanned |

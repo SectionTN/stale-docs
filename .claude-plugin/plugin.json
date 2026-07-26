@@ -1,9 +1,9 @@
 {
   "name": "stale-docs",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Detects documentation made stale by code changes and patches it in the same commit. Your docs can never lie again.",
   "author": {
-    "name": "SectionTN",
+    "name": "Rayen Sbai",
     "url": "https://github.com/SectionTN"
   },
   "homepage": "https://github.com/SectionTN/stale-docs",

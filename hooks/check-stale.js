@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULTS = {
+  enabled: true,
   sourceGlobs: ['**/*.{js,jsx,ts,tsx,mjs,cjs,py,go,rs,java,rb,c,h,cpp,hpp}'],
   docGlobs: ['README.md', '*.md', 'docs/**/*.md'],
   ignore: [
@@ -114,6 +115,7 @@ function loadConfig(root) {
     const raw = fs.readFileSync(path.join(root, '.stale-docs.json'), 'utf8');
     const parsed = JSON.parse(raw);
     return {
+      enabled: parsed.enabled !== false,
       sourceGlobs: Array.isArray(parsed.sourceGlobs) ? parsed.sourceGlobs : DEFAULTS.sourceGlobs,
       docGlobs: Array.isArray(parsed.docGlobs) ? parsed.docGlobs : DEFAULTS.docGlobs,
       ignore: Array.isArray(parsed.ignore) ? parsed.ignore : DEFAULTS.ignore,
@@ -434,6 +436,8 @@ function runHook() {
   if (sourceRel.startsWith('..')) return;
 
   const config = loadConfig(root);
+  // the kill switch mutes the hook only; an explicit /stale-docs audit still runs
+  if (!config.enabled) return;
   if (matchesAny(sourceRel, compileGlobs(config.ignore))) return;
   if (!matchesAny(sourceRel, compileGlobs(config.sourceGlobs))) return;
 

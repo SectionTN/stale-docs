@@ -86,11 +86,14 @@ Optional. Drop a `.stale-docs.json` in your repo root to override the defaults:
 
 ```json
 {
+  "enabled": true,
   "sourceGlobs": ["**/*.{js,jsx,ts,tsx,mjs,cjs,py,go,rs,java,rb,c,h,cpp,hpp}"],
   "docGlobs": ["README.md", "*.md", "docs/**/*.md"],
   "ignore": ["**/node_modules/**", "**/dist/**", "**/build/**", "**/vendor/**", "**/target/**"]
 }
 ```
+
+Set `"enabled": false` to mute the hook in one repo while keeping the plugin installed everywhere else. The `/stale-docs` audit still answers when you call it; only the automatic check goes quiet.
 
 ## CI
 
