@@ -1,10 +1,11 @@
 # Changelog
 
-## 0.3.0 - unreleased
+## 0.3.0 - 2026-07-26
 
 - `enabled` config key: set `false` in `.stale-docs.json` to mute the hook in one repo; the `/stale-docs` audit still runs
 - test suite in `tests/` with a committed fixture, runnable with `node tests/run.js`
 - CI workflow that syntax-checks the scanner, runs the suite, and audits this repo's own docs with `--ci`
+- every release ships `check-stale.js` as an asset, attached automatically by a release workflow, so CI setups can fetch the scanner from `releases/latest/download`
 - this changelog
 
 ## 0.2.0 - 2026-07-26
